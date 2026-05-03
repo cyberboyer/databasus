@@ -31,8 +31,8 @@ type EnvVariables struct {
 	// Internal Valkey
 	ValkeyHost     string `env:"VALKEY_HOST"     required:"true"`
 	ValkeyPort     string `env:"VALKEY_PORT"     required:"true"`
-	ValkeyUsername string `env:"VALKEY_USERNAME" required:"true"`
-	ValkeyPassword string `env:"VALKEY_PASSWORD" required:"true"`
+	ValkeyUsername string `env:"VALKEY_USERNAME"`
+	ValkeyPassword string `env:"VALKEY_PASSWORD"`
 	ValkeyIsSsl    bool   `env:"VALKEY_IS_SSL"   required:"true"`
 
 	IsCloud       bool   `env:"IS_CLOUD"`
@@ -52,7 +52,7 @@ type EnvVariables struct {
 
 	IsDisableAnonymousTelemetry bool `env:"IS_DISABLE_ANONYMOUS_TELEMETRY"`
 
-	// Billing (always tax-exclusive)
+	// Billing (tax-exclusive)
 	PricePerGBCents int64 `env:"PRICE_PER_GB_CENTS"`
 	MinStorageGB    int
 	MaxStorageGB    int
@@ -168,9 +168,18 @@ func loadEnvVariables() {
 	}
 	log.Info("Successfully loaded .env", "path", envPath)
 
+	// Empty values for non-string fields (e.g. SMTP_PORT=) crash cleanenv's
+	// strconv parsing. Drop them so cleanenv falls back to the Go zero value.
+	unsetEmptyEnvVars()
+
 	err = cleanenv.ReadEnv(&env)
 	if err != nil {
 		log.Error("Configuration could not be loaded", "error", err)
+		os.Exit(1)
+	}
+
+	if env.SMTPHost != "" && env.SMTPPort <= 0 {
+		log.Error("SMTP_PORT must be a positive integer when SMTP_HOST is set", "value", env.SMTPPort)
 		os.Exit(1)
 	}
 
@@ -322,8 +331,8 @@ func loadEnvVariables() {
 
 	// Billing
 	if env.IsCloud {
-		if env.PricePerGBCents == 0 {
-			log.Error("PRICE_PER_GB_CENTS is empty or zero")
+		if env.PricePerGBCents <= 0 {
+			log.Error("PRICE_PER_GB_CENTS must be a positive integer in cloud mode", "value", env.PricePerGBCents)
 			os.Exit(1)
 		}
 
@@ -355,4 +364,17 @@ func loadEnvVariables() {
 	env.GracePeriod = 30 * 24 * time.Hour
 
 	log.Info("Environment variables loaded successfully!")
+}
+
+func unsetEmptyEnvVars() {
+	for _, kv := range os.Environ() {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+
+		if value == "" {
+			_ = os.Unsetenv(key)
+		}
+	}
 }
